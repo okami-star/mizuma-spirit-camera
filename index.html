@@ -130,15 +130,19 @@ function putClip(x,y,w,now,o={}){
   const k=Math.floor(t)%(2*n-2),f=k<n?k:2*n-2-k;   // play forward then back: seamless loop
   const sx=(f%m.cols)*m.w,sy=Math.floor(f/m.cols)*m.h,h=w*m.h/m.w;
   ctx.save();ctx.translate(x,y);ctx.rotate(o.rot||0);ctx.scale(o.flip?-1:1,1);
-  ctx.globalAlpha=o.alpha??1;ctx.drawImage(CLIP.img,sx,sy,m.w,m.h,-w/2,-h/2,w,h);
-  if(o.glow){ctx.globalCompositeOperation='lighter';ctx.globalAlpha=(o.alpha??1)*o.glow;ctx.drawImage(CLIP.img,sx,sy,m.w,m.h,-w/2,-h/2,w,h)}
+  const ow=Math.max(2,Math.ceil(w)),oh=Math.max(2,Math.ceil(h));off.width=ow;off.height=oh;
+  octx.globalCompositeOperation='source-over';octx.clearRect(0,0,ow,oh);octx.drawImage(CLIP.img,sx,sy,m.w,m.h,0,0,ow,oh);
+  octx.globalCompositeOperation='source-atop';octx.fillStyle=`rgba(${sceneCol[0]},${sceneCol[1]},${sceneCol[2]},.22)`;octx.fillRect(0,0,ow,oh);
+  if(shade>.01){octx.fillStyle=`rgba(8,16,18,${shade})`;octx.fillRect(0,0,ow,oh)}
+  ctx.globalAlpha=(o.alpha??1)*.55;ctx.drawImage(off,-w/2-1,-h/2-1,w+2,h+2);   // soft halo layer
+  ctx.globalAlpha=o.alpha??1;ctx.drawImage(off,-w/2,-h/2,w,h);
   ctx.restore();
 }
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
 const off=document.createElement('canvas'),octx=off.getContext('2d');
-let shade=0;
+let shade=0,sceneCol=[40,60,60];
 
 /* light level of the scene, sampled twice a second */
 const probe=document.createElement('canvas');probe.width=probe.height=16;const pctx=probe.getContext('2d',{willReadFrequently:true});
@@ -146,7 +150,7 @@ let probeAt=0;
 function measure(now){
   if(now<probeAt)return;probeAt=now+500;
   try{pctx.drawImage(cv,0,0,16,16);const d=pctx.getImageData(0,0,16,16).data;let s=0;for(let i=0;i<d.length;i+=4)s+=.3*d[i]+.59*d[i+1]+.11*d[i+2];
-    const lum=s/(d.length/4)/255;shade=Math.min(.4,Math.max(0,(.5-lum)*.8));}catch(_){shade=0}
+    let R=0,G=0,B=0;for(let i=0;i<d.length;i+=4){R+=d[i];G+=d[i+1];B+=d[i+2]}const n=d.length/4;sceneCol=[R/n|0,G/n|0,B/n|0];const lum=s/n/255;shade=Math.min(.4,Math.max(0,(.5-lum)*.8));}catch(_){shade=0}
 }
 /* draw one sprite: centre x,y, width w, optional flip, alpha, ghost glow */
 function put(name,x,y,w,o={}){
@@ -185,21 +189,21 @@ function updateFairy(f,now){
     case 'circle':{const a=t*Math.PI*2/2.6*s.dir;f.x=s.cx+Math.cos(a)*s.r;f.y=s.cy+Math.sin(a)*s.r*.45;f.z=s.z0*(1+.18*Math.sin(a));f.flip=(-Math.sin(a)*s.dir)>0;break}
     case 'twirl':f.y=s.y0+Math.sin(t*3)*8;break;
     case 'rest':f.y=s.y0+Math.sin(t*1.5)*6;break;
-    case 'approach':{const q=Math.sin(p*Math.PI);f.x=s.x0+(s.x1-s.x0)*q;f.y=s.y0+(s.y1-s.y0)*q;f.z=s.z0+(1.9-s.z0)*q;f.flip=false;break}
+    case 'approach':{const q=Math.sin(p*Math.PI);f.x=s.x0+(s.x1-s.x0)*q;f.y=s.y0+(s.y1-s.y0)*q;f.z=s.z0+(1.5-s.z0)*q;f.flip=false;break}
     case 'flyby':f.x=s.xs+(s.xe-s.xs)*p;f.y=s.yb+Math.sin(p*Math.PI*3)*H*.04;f.z=s.z0;if(p>=1){f.x=s.xe<0?.1*W:.9*W}break;
   }
   f.y+=Math.sin(now/450+f.ph)*4;
 }
 function drawFairy(f,now){
   updateFairy(f,now);
-  const w=W*.26*f.z,a=clamp(.55+.35*f.z,.6,.92);
+  const w=W*.15*f.z,a=clamp(.55+.35*f.z,.6,.92);
   // halo
-  ctx.save();ctx.globalCompositeOperation='lighter';const g=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,w*.6);g.addColorStop(0,'rgba(220,255,250,.28)');g.addColorStop(1,'rgba(10,186,181,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(f.x,f.y,w*.6,0,7);ctx.fill();ctx.restore();
+  ctx.save();ctx.globalCompositeOperation='lighter';const g=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,w*.6);g.addColorStop(0,'rgba(220,255,250,.14)');g.addColorStop(1,'rgba(10,186,181,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(f.x,f.y,w*.6,0,7);ctx.fill();ctx.restore();
   if(!reduce&&Math.random()<.55)dust.push({x:f.x+rnd(-w*.12,w*.12),y:f.y+w*.15,vy:rnd(.3,1.1),vx:rnd(-.4,.4),life:1,r:rnd(1.5,3.5)*f.z});
   const flap=reduce?1:.95+.05*Math.sin(now/18+f.ph);
   let sx=flap,flip=f.flip;
   if(f.act==='twirl'){const c=Math.cos((now-f.st.t0)/120);sx=Math.max(.08,Math.abs(c));flip=c<0}
-  if(clipReady()){putClip(f.x,f.y,w*1.35,now,{alpha:.5,flip:f.act==='twirl'?flip:f.flip,offset:f.id*17,glow:.06,rot:f.act==='dart'?(f.flip?.25:-.25):0});return}
+  if(clipReady()){putClip(f.x,f.y,w*1.35,now,{alpha:.32,flip:f.act==='twirl'?flip:f.flip,offset:f.id*17,rot:f.act==='dart'?(f.flip?.25:-.25):0});return}
   const fade=clamp((now-f.fadeAt)/260,0,1);
   if(f.prev&&fade<1)put(f.prev,f.x,f.y,w,{alpha:.5*(1-fade),flip,sx,glow:.06});
   put(f.pose,f.x,f.y,w,{alpha:.5*(f.prev?fade:1),flip,sx,glow:.06});
@@ -221,11 +225,11 @@ const ghosts=[];let nextGhost=performance.now()+1800,lastWho='';
 function spawnGhost(now){
   let who;do{who=pick(Object.keys(CAST))}while(who===lastWho&&Math.random()<.75);lastWho=who;
   const c=CAST[who],r=Math.random(),w=W*rnd(c.size[0],c.size[1]);
-  let g={who,born:now,hit:false,w,alpha:.5};
+  let g={who,born:now,hit:false,w:w*.62,alpha:.33};
   if(r<.3){g.act='peek';g.pose=c.peek;g.x=rnd(.25,.75)*W;g.dur=rnd(3000,4500)}
   else if(r<.62){const m=pick(c.move);g.act=m[2];g.pose=m[0];const left=Math.random()<.5;g.dir=left?1:-1;g.flip=left;g.xs=left?-.35*W:1.35*W;g.xe=left?1.35*W:-.35*W;g.dur=1.7/m[1]*1000*rnd(.85,1.15);g.w*=rnd(.8,1)}
   else if(r<.9){g.act='appear';g.pose=pick(c.stand);g.x=rnd(.22,.78)*W;g.yb=rnd(.62,.78)*H;g.dur=rnd(2600,3800);g.flip=Math.random()<.5;g.w*=rnd(.75,.95)}
-  else{g.act='popup';g.pose=c.peek;g.x=rnd(.4,.6)*W;g.w=W*rnd(.8,.95);g.dur=1500}
+  else{g.act='popup';g.pose=c.peek;g.x=rnd(.4,.6)*W;g.w=W*rnd(.5,.62);g.dur=1500}
   ghosts.push(g);
 }
 function drawGhost(g,now){
