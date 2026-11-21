@@ -74,7 +74,7 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
   <section class="legend">
     <h2>水間の森には、何かいる</h2>
-    <p>伝承では、天平のころ、行基は十六人の童子に導かれて水間の滝にたどり着き、龍神から観音像を授かったという。光の粒は、その童子たち。ときどき顔を出す妖怪は、指でふれると驚いて隠れます。</p>
+    <p>伝承では、天平のころ、行基は十六人の童子に導かれて水間の滝にたどり着き、龍神から観音像を授かったという。光の粒は、その童子たち。ときどき足もとから顔を出す妖怪は、指でふれると驚いて隠れます。</p>
     <p class="en">Legend tells that the monk Gyōki was led to the Mizuma waterfall by sixteen spirit children. Point your camera at the forest. Tap a yokai when it peeks out.</p>
   </section>
 </div>
@@ -105,87 +105,80 @@ function background(){
   ctx.fillStyle='rgba(0,10,10,.12)';ctx.fillRect(0,0,W,H);
 }
 
+/* ---------- sprites ---------- */
+const load=n=>{const i=new Image();i.src='sprites/'+n+'.png';return i};
+const FAIRY=['fairy-01','fairy-02','fairy-03'].map(load);
+const YOKAI=['hitotsume-01','hitotsume-02','karakasa-01','karakasa-02','kitsune-01','kitsune-02'].map(load);
+const ok=i=>i.complete&&i.naturalWidth>0;
+const off=document.createElement('canvas'),octx=off.getContext('2d');
+let shade=0; // how much to darken sprites to match the scene
+
+/* light level of the scene, sampled twice a second */
+const probe=document.createElement('canvas');probe.width=probe.height=16;const pctx=probe.getContext('2d',{willReadFrequently:true});
+let probeAt=0;
+function measure(now){
+  if(now<probeAt)return;probeAt=now+500;
+  try{pctx.drawImage(cv,0,0,16,16);const d=pctx.getImageData(0,0,16,16).data;let s=0;for(let i=0;i<d.length;i+=4)s+=.3*d[i]+.59*d[i+1]+.11*d[i+2];
+    const lum=s/(d.length/4)/255;shade=Math.min(.45,Math.max(0,(.5-lum)*.9));}catch(_){shade=0}
+}
+function sprite(im,x,y,w,h,dark){ // draw with scene-matched shading
+  if(dark<=.01){ctx.drawImage(im,x,y,w,h);return}
+  off.width=Math.ceil(w);off.height=Math.ceil(h);
+  octx.globalCompositeOperation='source-over';octx.clearRect(0,0,off.width,off.height);octx.drawImage(im,0,0,off.width,off.height);
+  octx.globalCompositeOperation='source-atop';octx.fillStyle=`rgba(8,16,18,${dark})`;octx.fillRect(0,0,off.width,off.height);
+  ctx.drawImage(off,x,y,w,h);
+}
+
 /* ---------- fairies (十六童子の光) ---------- */
-const fairies=Array.from({length:6},(_,i)=>({x:rnd(.15,.85)*W,y:rnd(.15,.8)*H,ax:rnd(.18,.38),ay:rnd(.12,.3),ph:rnd(0,6.28),sp:rnd(.25,.5),s:rnd(.7,1.25),trail:[]}));
+const fairies=FAIRY.map((im,i)=>({im,bx:rnd(.25,.75),by:rnd(.18,.55),ax:rnd(.2,.3),ay:rnd(.08,.16),sp:rnd(.18,.3),ph:rnd(0,6.28)+i*2,zs:rnd(.08,.14),px:0}));
+const dust=[];
 function drawFairy(f,t){
-  const x=f.x+Math.sin(t*f.sp+f.ph)*f.ax*W*.6+Math.sin(t*f.sp*2.3+f.ph)*30;
-  const y=f.y+Math.sin(t*f.sp*1.4+f.ph*2)*f.ay*H*.5+Math.cos(t*3+f.ph)*8;
-  f.trail.push([x,y]);if(f.trail.length>18)f.trail.shift();
+  if(!ok(f.im))return;
+  const z=.75+.3*Math.sin(t*f.zs*2+f.ph);              // drifts nearer and farther
+  const x=(f.bx+Math.sin(t*f.sp+f.ph)*f.ax+Math.sin(t*f.sp*2.7+f.ph)*.04)*W;
+  const y=(f.by+Math.sin(t*f.sp*1.3+f.ph*1.7)*f.ay)*H+Math.sin(t*2.2+f.ph)*10;
+  const vx=x-f.px;f.px=x;
+  const w=W*.24*z,h=w*f.im.naturalHeight/f.im.naturalWidth;
   ctx.save();ctx.globalCompositeOperation='lighter';
-  f.trail.forEach(([tx,ty],i)=>{const a=i/f.trail.length;ctx.fillStyle=`rgba(10,186,181,${a*.35})`;ctx.beginPath();ctx.arc(tx+Math.sin(i)*3,ty+i*.4,2.4*a*f.s+0.5,0,7);ctx.fill()});
-  const s=f.s*16,flap=reduce?.8:.35+.65*Math.abs(Math.sin(t*18+f.ph));
-  ctx.translate(x,y);
-  ctx.fillStyle='rgba(220,250,248,.28)';ctx.strokeStyle='rgba(244,246,246,.55)';ctx.lineWidth=1;
-  [[-1,-1],[1,-1],[-1,.6],[1,.6]].forEach(([sx,sy],k)=>{ctx.save();ctx.scale(sx*flap,1);ctx.rotate(sy<0?-.5:.5);
-    ctx.beginPath();ctx.ellipse(s*(k<2?1.1:.8),sy*s*.2,s*(k<2?1.2:.8),s*(k<2?.55:.4),0,0,7);ctx.fill();ctx.stroke();ctx.restore()});
-  const g=ctx.createRadialGradient(0,0,0,0,0,s*2.4);g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.18,'rgba(200,255,250,.9)');g.addColorStop(.45,'rgba(10,186,181,.35)');g.addColorStop(1,'rgba(10,186,181,0)');
-  ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,s*2.4,0,7);ctx.fill();
+  const g=ctx.createRadialGradient(x,y,0,x,y,w*.7);g.addColorStop(0,'rgba(220,255,250,.3)');g.addColorStop(1,'rgba(10,186,181,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,w*.7,0,7);ctx.fill();ctx.restore();
+  if(!reduce&&Math.random()<.5)dust.push({x:x+rnd(-w*.15,w*.15),y:y+h*.2,vy:rnd(.4,1.2),vx:rnd(-.3,.3),life:1,r:rnd(1.5,3.5)*z});
+  ctx.save();ctx.translate(x,y);ctx.rotate(Math.max(-.25,Math.min(.25,vx*.02)));
+  const flap=reduce?1:.96+.04*Math.sin(t*26+f.ph);ctx.scale(flap,1);
+  ctx.drawImage(f.im,-w/2,-h/2,w,h);ctx.restore();
+}
+function drawDust(){
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  for(let i=dust.length-1;i>=0;i--){const d=dust[i];d.x+=d.vx;d.y+=d.vy;d.life-=.012;if(d.life<=0){dust.splice(i,1);continue}
+    const tw=.5+.5*Math.sin(d.life*40);ctx.fillStyle=`rgba(255,248,220,${d.life*tw})`;ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,7);ctx.fill()}
   ctx.restore();
 }
 
-/* ---------- yokai that peek from the edges ---------- */
-const KINDS=['hitotsume','karakasa','kitsune'];
-let yokai=null,nextAt=performance.now()+1500;
+/* ---------- yokai peeking up from the bottom ---------- */
+let yokai=null,nextAt=performance.now()+2000,lastKind=-1;
 function spawn(now){
-  const edge=['bottom','bottom','left','right'][Math.floor(Math.random()*4)];
-  yokai={kind:KINDS[Math.floor(Math.random()*3)],edge,pos:rnd(.22,.78),born:now,dur:3400,size:rnd(150,210),hit:false,blinkAt:now+rnd(700,1500)};
-}
-function peek(y,now){ // 0 hidden → 1 out
-  const e=now-y.born;if(y.hit){return Math.max(0,1-(now-y.hitAt)/220)}
-  if(e<700)return ease(e/700);if(e<y.dur-700)return 1;return ease(Math.max(0,(y.dur-e)/700));
+  let k;do{k=Math.floor(Math.random()*YOKAI.length)}while(Math.floor(k/2)===Math.floor(lastKind/2)&&Math.random()<.8);lastKind=k;
+  const im=YOKAI[k];if(!ok(im)){nextAt=now+500;return}
+  const w=W*rnd(.42,.58);
+  yokai={im,w,h:w*im.naturalHeight/im.naturalWidth,x:rnd(.28,.72)*W,born:now,dur:rnd(3200,4600),hit:false};
 }
 const ease=p=>1-Math.pow(1-p,3);
-function frameOf(y){ // anchor point on the edge and rotation
-  if(y.edge==='bottom')return{x:y.pos*W,y:H,r:0};
-  if(y.edge==='left')return{x:0,y:y.pos*H,r:Math.PI/2};
-  return{x:W,y:y.pos*H,r:-Math.PI/2};
+function peek(y,now){
+  if(y.hit)return Math.max(0,1-(now-y.hitAt)/200);
+  const e=now-y.born;if(e<900)return ease(e/900);if(e<y.dur-800)return 1;return ease(Math.max(0,(y.dur-e)/800));
 }
 function drawYokai(y,now){
   const p=peek(y,now);if(p<=0)return;
-  const f=frameOf(y),S=y.size,off=S*(1.15-1.1*p);
-  ctx.save();ctx.translate(f.x,f.y);ctx.rotate(f.r);ctx.translate(0,off);
-  ctx.rotate(Math.sin(now/400)*.06);
-  const blink=(now>y.blinkAt&&now<y.blinkAt+140)?.1:1;if(now>y.blinkAt+140)y.blinkAt=now+rnd(1200,2400);
-  ctx.shadowColor='rgba(10,186,181,.6)';ctx.shadowBlur=28;
-  if(y.kind==='hitotsume')hitotsume(S,blink,now);else if(y.kind==='karakasa')karakasa(S,blink,now);else kitsune(S,blink);
-  ctx.restore();
-  // face centre in canvas coords, for tapping
-  const d=off-S*.45;y.hx=f.x-Math.sin(f.r)*d;y.hy=f.y+Math.cos(f.r)*d;
+  const breathe=reduce?1:1+.012*Math.sin(now/520);
+  const h=y.h*breathe,top=H-h*p,sway=reduce?0:Math.sin(now/900)*y.w*.015;
+  y.box=[y.x-y.w/2,top,y.w,h*p];
+  sprite(y.im,y.x-y.w/2+sway,top,y.w,h,shade);
 }
-function eye(x,y,r,blink,iris){
-  ctx.save();ctx.translate(x,y);ctx.scale(1,blink);
-  ctx.fillStyle='#f4f6f6';ctx.beginPath();ctx.ellipse(0,0,r,r*.82,0,0,7);ctx.fill();
-  ctx.fillStyle=iris;ctx.beginPath();ctx.arc(0,r*.1,r*.48,0,7);ctx.fill();
-  ctx.fillStyle='#050707';ctx.beginPath();ctx.arc(0,r*.12,r*.22,0,7);ctx.fill();
-  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-r*.16,-r*.08,r*.09,0,7);ctx.fill();
-  ctx.restore();
-}
-function hitotsume(S,b){ // one-eyed goblin
-  ctx.fillStyle='#1b2526';ctx.strokeStyle='#f4f6f6';ctx.lineWidth=3;
-  ctx.beginPath();ctx.moveTo(-S*.25,-S*.82);ctx.lineTo(-S*.15,-S*1.02);ctx.lineTo(-S*.05,-S*.86);ctx.fill();ctx.stroke();
-  ctx.beginPath();ctx.moveTo(S*.25,-S*.82);ctx.lineTo(S*.15,-S*1.02);ctx.lineTo(S*.05,-S*.86);ctx.fill();ctx.stroke();
-  ctx.beginPath();ctx.ellipse(0,-S*.35,S*.52,S*.6,0,0,7);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-  eye(0,-S*.48,S*.24,b,'#0abab5');
-  ctx.strokeStyle='#f4f6f6';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,-S*.12,S*.14,.2,Math.PI-.2);ctx.stroke();
-}
-function karakasa(S,b,now){ // paper umbrella spirit
-  ctx.fillStyle='#e9ecea';ctx.strokeStyle='#1b2526';ctx.lineWidth=3;
-  ctx.beginPath();ctx.moveTo(0,-S*1.05);ctx.quadraticCurveTo(S*.62,-S*.4,S*.6,S*.05);ctx.lineTo(-S*.6,S*.05);ctx.quadraticCurveTo(-S*.62,-S*.4,0,-S*1.05);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-  ctx.strokeStyle='rgba(10,124,121,.7)';ctx.lineWidth=2;
-  for(let i=-2;i<=2;i++){ctx.beginPath();ctx.moveTo(0,-S*1.02);ctx.lineTo(i*S*.25,S*.05);ctx.stroke()}
-  eye(0,-S*.45,S*.17,b,'#0abab5');
-  ctx.fillStyle='#c4566a';ctx.beginPath();ctx.moveTo(-S*.08,-S*.18);ctx.quadraticCurveTo(0,S*.12+Math.sin(now/180)*S*.04,S*.08,-S*.18);ctx.fill();
-}
-function kitsune(S,b){ // fox mask
-  ctx.fillStyle='#f4f6f6';ctx.strokeStyle='#0abab5';ctx.lineWidth=3;
-  ctx.beginPath();ctx.moveTo(-S*.45,-S*.55);ctx.lineTo(-S*.38,-S*1.05);ctx.lineTo(-S*.1,-S*.72);ctx.lineTo(S*.1,-S*.72);ctx.lineTo(S*.38,-S*1.05);ctx.lineTo(S*.45,-S*.55);
-  ctx.quadraticCurveTo(S*.5,-S*.1,0,S*.15);ctx.quadraticCurveTo(-S*.5,-S*.1,-S*.45,-S*.55);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-  ctx.strokeStyle='#050707';ctx.lineWidth=4;ctx.lineCap='round';
-  [[-1],[1]].forEach(([s])=>{ctx.save();ctx.translate(s*S*.2,-S*.5);ctx.scale(s,b);ctx.beginPath();ctx.moveTo(-S*.1,S*.04);ctx.quadraticCurveTo(0,-S*.04,S*.1,-S*.06);ctx.stroke();ctx.restore()});
-  ctx.strokeStyle='#0abab5';ctx.lineWidth=3;
-  [[-1],[1]].forEach(([s])=>{ctx.beginPath();ctx.moveTo(s*S*.12,-S*.66);ctx.quadraticCurveTo(s*S*.26,-S*.82,s*S*.3,-S*.66);ctx.stroke()});
-  ctx.fillStyle='#050707';ctx.beginPath();ctx.ellipse(0,S*.06,S*.06,S*.04,0,0,7);ctx.fill();
-}
+
+/* subtle film grain so everything sits in one picture */
+const grain=document.createElement('canvas');grain.width=grain.height=160;(()=>{const g=grain.getContext('2d'),d=g.createImageData(160,160);for(let i=0;i<d.data.length;i+=4){const v=Math.random()*255;d.data[i]=d.data[i+1]=d.data[i+2]=v;d.data[i+3]=255}g.putImageData(d,0,0)})();
+const grainPat=ctx.createPattern(grain,'repeat');
+function drawGrain(){ctx.save();ctx.globalAlpha=.05;ctx.globalCompositeOperation='overlay';ctx.translate(-Math.random()*160,-Math.random()*160);ctx.fillStyle=grainPat;ctx.fillRect(0,0,W+160,H+160);ctx.restore()}
 
 /* ---------- loop ---------- */
 function mark(){
@@ -195,11 +188,11 @@ function mark(){
 }
 function draw(now){
   const t=now/1000;
-  background();
-  fairies.forEach(f=>drawFairy(f,t));
+  background();measure(now);
   if(!yokai&&now>nextAt)spawn(now);
-  if(yokai){drawYokai(yokai,now);const done=yokai.hit?now-yokai.hitAt>240:now-yokai.born>yokai.dur;if(done){yokai=null;nextAt=now+rnd(1500,4000)}}
-  mark();
+  if(yokai){drawYokai(yokai,now);const done=yokai.hit?now-yokai.hitAt>220:now-yokai.born>yokai.dur;if(done){yokai=null;nextAt=now+rnd(2000,4500)}}
+  drawDust();fairies.forEach(f=>drawFairy(f,t));
+  drawGrain();mark();
 }
 function loop(now){draw(now);requestAnimationFrame(loop)}
 requestAnimationFrame(loop);
@@ -208,7 +201,7 @@ requestAnimationFrame(loop);
 stage.addEventListener('pointerdown',e=>{
   if(!yokai||yokai.hit)return;
   const r=stage.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*W,y=(e.clientY-r.top)/r.height*H;
-  if(Math.hypot(x-yokai.hx,y-yokai.hy)<yokai.size*.75){yokai.hit=true;yokai.hitAt=performance.now();found++;foundEl.textContent=found;statusEl.textContent='見つけた。妖怪は驚いて隠れました。'}
+  const bx=yokai.box;if(bx&&x>bx[0]&&x<bx[0]+bx[2]&&y>bx[1]-20){yokai.hit=true;yokai.hitAt=performance.now();found++;foundEl.textContent=found;statusEl.textContent='見つけた。妖怪は驚いて隠れました。'}
 });
 
 /* camera */
