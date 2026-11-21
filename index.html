@@ -35,7 +35,9 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #photo{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .status{min-height:1.4em;font-size:13px;color:var(--jade)}
 .preview{display:flex;flex-direction:column;gap:8px}
-.preview img{width:100%;border:1px solid var(--line)}
+.preview img,.preview video{width:100%;border:1px solid var(--line);background:#000}
+.pbtns{display:flex;gap:10px}.pbtns .btn{flex:1;text-decoration:none}
+.rec{width:100%}.rec.on{background:#c4566a;border-color:#c4566a;color:var(--paper)}
 .preview p{margin:0;font-size:13px;color:var(--mute)}
 .legend{border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:10px;line-height:1.9;font-size:14px}
 .legend h2{margin:0;font-size:15px;letter-spacing:.2em;color:var(--jade);font-weight:500}
@@ -67,9 +69,15 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
     </label>
   </div>
   <div class="status" id="status" role="status"></div>
+  <button class="btn rec" id="rec" type="button">● 動画をとる</button>
   <div class="preview" id="preview" hidden>
-    <img id="pimg" alt="撮った写真">
-    <p id="ptext">写真を長押しすると保存できます。</p>
+    <img id="pimg" alt="撮った写真" hidden>
+    <video id="pvid" controls playsinline loop muted hidden></video>
+    <div class="pbtns">
+      <button class="btn" id="share" type="button">保存・シェア</button>
+      <a class="btn" id="dlink" download hidden>ダウンロード</a>
+    </div>
+    <p id="ptext"></p>
   </div>
 
   <section class="legend">
@@ -223,21 +231,53 @@ document.getElementById('photo').addEventListener('change',e=>{
   im.src=URL.createObjectURL(f);
 });
 
-/* shutter */
-let dl=null;
+/* results: photo or video */
+let dl=null,lastFile=null;
 (async()=>{try{dl=window.claude?.use?await window.claude.use('downloads'):null}catch(_){dl=null}})();
+const pv=document.getElementById('preview'),pimg=document.getElementById('pimg'),pvid=document.getElementById('pvid'),dlink=document.getElementById('dlink'),ptext=document.getElementById('ptext');
+function showResult(blob,kind,name){
+  const url=URL.createObjectURL(blob);lastFile=new File([blob],name,{type:blob.type});
+  pimg.hidden=kind!=='photo';pvid.hidden=kind!=='video';
+  if(kind==='photo')pimg.src=url;else{pvid.src=url;pvid.play().catch(()=>{})}
+  dlink.href=url;dlink.download=name;
+  const canShare=navigator.canShare&&navigator.canShare({files:[lastFile]});
+  dlink.hidden=!!canShare||!!dl;
+  ptext.textContent=canShare?'「保存・シェア」から、カメラロールへの保存やSNSへの投稿ができます。':(kind==='photo'?'写真を長押しして保存してもOKです。':'');
+  pv.hidden=false;pv.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+document.getElementById('share').addEventListener('click',async()=>{
+  if(!lastFile)return;
+  if(navigator.canShare&&navigator.canShare({files:[lastFile]})){
+    try{await navigator.share({files:[lastFile],title:'水間 妖のカメラ'});statusEl.textContent='保存・シェアしました。'}catch(e){if(e&&e.name!=='AbortError')statusEl.textContent='シェアできませんでした。'}
+  }else if(dl){
+    try{await dl.save({filename:lastFile.name,data:lastFile});statusEl.textContent='保存しました。'}catch(err){statusEl.textContent=err&&err.code==='declined'?'保存をやめました。':'保存できませんでした。'}
+  }else{dlink.click()}
+});
+
+/* shutter */
 document.getElementById('shot').addEventListener('click',()=>{
   draw(performance.now());
   const fl=document.getElementById('flash');fl.classList.add('on');requestAnimationFrame(()=>requestAnimationFrame(()=>fl.classList.remove('on')));
-  cv.toBlob(async b=>{
-    if(!b){statusEl.textContent='写真を作れませんでした。もう一度押してください。';return}
-    const pv=document.getElementById('preview'),pimg=document.getElementById('pimg');
-    pimg.src=URL.createObjectURL(b);pv.hidden=false;
-    if(dl){
-      try{await dl.save({filename:'mizuma-spirit.jpg',data:b});statusEl.textContent='保存しました。'}
-      catch(err){statusEl.textContent=err&&err.code==='declined'?'保存をやめました。下の写真は長押しでも保存できます。':'下の写真を長押しして保存してください。'}
-    }else statusEl.textContent='撮れました。下の写真を長押しして保存してください。';
-  },'image/jpeg',.92);
+  cv.toBlob(b=>{if(!b){statusEl.textContent='写真を作れませんでした。もう一度押してください。';return}showResult(b,'photo','mizuma-spirit.jpg');statusEl.textContent='撮れました。'},'image/jpeg',.92);
+});
+
+/* video */
+const recBtn=document.getElementById('rec');let rec=null,recT0=0,recTimer=0;const MAX=30;
+function pickType(){if(!window.MediaRecorder)return null;return['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||''}
+recBtn.addEventListener('click',()=>{
+  if(rec){rec.stop();return}
+  const type=pickType();
+  if(type===null||!cv.captureStream){statusEl.textContent='このブラウザでは動画をとれません。SafariかChromeの新しい版で開いてください。';return}
+  const chunks=[];
+  try{rec=new MediaRecorder(cv.captureStream(30),type?{mimeType:type,videoBitsPerSecond:5e6}:undefined)}catch(e){rec=null;statusEl.textContent='動画をとれませんでした。';return}
+  rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+  rec.onstop=()=>{clearInterval(recTimer);recBtn.classList.remove('on');recBtn.textContent='● 動画をとる';
+    const mt=rec.mimeType||type||'video/webm';rec=null;
+    const blob=new Blob(chunks,{type:mt.split(';')[0]});
+    showResult(blob,'video','mizuma-spirit.'+(mt.includes('mp4')?'mp4':'webm'));statusEl.textContent='動画がとれました。';};
+  rec.start(250);recT0=Date.now();recBtn.classList.add('on');
+  const tick=()=>{const s=Math.floor((Date.now()-recT0)/1000);recBtn.textContent=`■ とめる　0:${String(s).padStart(2,'0')}`;if(s>=MAX&&rec)rec.stop()};
+  tick();recTimer=setInterval(tick,250);statusEl.textContent=`録画中（最長${MAX}秒）。もう一度押すと止まります。`;
 });
 })();
 </script>
