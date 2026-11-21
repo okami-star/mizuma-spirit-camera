@@ -120,6 +120,20 @@ const IMG={};
  'c_hop','c_peek','c_side','c_open',
  'k_peek','k_sit','k_walk','k_leap','k_sleep','k_look'].forEach(n=>{const i=new Image();i.src='sprites3d/'+n+'.webp';IMG[n]=i});
 const ok=n=>{const i=IMG[n];return i&&i.complete&&i.naturalWidth>0};
+/* 3DCG clip: frames packed in one transparent atlas */
+const CLIP={img:new Image(),meta:null};
+CLIP.img.src='clips/fairy_hover.webp';
+fetch('clips/fairy_hover.json').then(r=>r.json()).then(m=>CLIP.meta=m).catch(()=>{});
+const clipReady=()=>CLIP.meta&&CLIP.img.complete&&CLIP.img.naturalWidth>0;
+function putClip(x,y,w,now,o={}){
+  const m=CLIP.meta,n=m.frames,t=(now/1000)*m.fps+(o.offset||0);
+  const k=Math.floor(t)%(2*n-2),f=k<n?k:2*n-2-k;   // play forward then back: seamless loop
+  const sx=(f%m.cols)*m.w,sy=Math.floor(f/m.cols)*m.h,h=w*m.h/m.w;
+  ctx.save();ctx.translate(x,y);ctx.rotate(o.rot||0);ctx.scale(o.flip?-1:1,1);
+  ctx.globalAlpha=o.alpha??1;ctx.drawImage(CLIP.img,sx,sy,m.w,m.h,-w/2,-h/2,w,h);
+  if(o.glow){ctx.globalCompositeOperation='lighter';ctx.globalAlpha=(o.alpha??1)*o.glow;ctx.drawImage(CLIP.img,sx,sy,m.w,m.h,-w/2,-h/2,w,h)}
+  ctx.restore();
+}
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
@@ -185,9 +199,10 @@ function drawFairy(f,now){
   const flap=reduce?1:.95+.05*Math.sin(now/18+f.ph);
   let sx=flap,flip=f.flip;
   if(f.act==='twirl'){const c=Math.cos((now-f.st.t0)/120);sx=Math.max(.08,Math.abs(c));flip=c<0}
+  if(clipReady()){putClip(f.x,f.y,w*1.35,now,{alpha:.5,flip:f.act==='twirl'?flip:f.flip,offset:f.id*17,glow:.06,rot:f.act==='dart'?(f.flip?.25:-.25):0});return}
   const fade=clamp((now-f.fadeAt)/260,0,1);
-  if(f.prev&&fade<1)put(f.prev,f.x,f.y,w,{alpha:a*(1-fade),flip,sx,glow:.18});
-  put(f.pose,f.x,f.y,w,{alpha:a*(f.prev?fade:1),flip,sx,glow:.18});
+  if(f.prev&&fade<1)put(f.prev,f.x,f.y,w,{alpha:.5*(1-fade),flip,sx,glow:.06});
+  put(f.pose,f.x,f.y,w,{alpha:.5*(f.prev?fade:1),flip,sx,glow:.06});
 }
 function drawDust(){
   ctx.save();ctx.globalCompositeOperation='lighter';
@@ -206,7 +221,7 @@ const ghosts=[];let nextGhost=performance.now()+1800,lastWho='';
 function spawnGhost(now){
   let who;do{who=pick(Object.keys(CAST))}while(who===lastWho&&Math.random()<.75);lastWho=who;
   const c=CAST[who],r=Math.random(),w=W*rnd(c.size[0],c.size[1]);
-  let g={who,born:now,hit:false,w,alpha:rnd(.68,.82)};
+  let g={who,born:now,hit:false,w,alpha:.5};
   if(r<.3){g.act='peek';g.pose=c.peek;g.x=rnd(.25,.75)*W;g.dur=rnd(3000,4500)}
   else if(r<.62){const m=pick(c.move);g.act=m[2];g.pose=m[0];const left=Math.random()<.5;g.dir=left?1:-1;g.flip=left;g.xs=left?-.35*W:1.35*W;g.xe=left?1.35*W:-.35*W;g.dur=1.7/m[1]*1000*rnd(.85,1.15);g.w*=rnd(.8,1)}
   else if(r<.9){g.act='appear';g.pose=pick(c.stand);g.x=rnd(.22,.78)*W;g.yb=rnd(.62,.78)*H;g.dur=rnd(2600,3800);g.flip=Math.random()<.5;g.w*=rnd(.75,.95)}
@@ -235,7 +250,7 @@ function drawGhost(g,now){
   if(e>g.dur||out<=0){g.dead=true;return}
   // ghost light on the ground
   ctx.save();ctx.globalCompositeOperation='lighter';const gl=ctx.createRadialGradient(x,y+h*.3,0,x,y+h*.3,g.w*.55);gl.addColorStop(0,`rgba(160,240,235,${.18*a})`);gl.addColorStop(1,'rgba(10,186,181,0)');ctx.fillStyle=gl;ctx.beginPath();ctx.arc(x,y+h*.3,g.w*.55,0,7);ctx.fill();ctx.restore();
-  put(g.pose,x,y,g.w,{alpha:a,flip:g.flip,rot,dark:shade,glow:.22});
+  put(g.pose,x,y,g.w,{alpha:a,flip:g.flip,rot,dark:shade,glow:.06});
   g.box=[x-g.w/2,y-h/2,g.w,h];
 }
 
