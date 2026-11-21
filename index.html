@@ -82,7 +82,7 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
   <section class="legend">
     <h2>水間の森には、何かいる</h2>
-    <p>伝承では、天平のころ、行基は十六人の童子に導かれて水間の滝にたどり着き、龍神から観音像を授かったという。光の粒は、その童子たち。ときどき足もとから顔を出す妖怪は、指でふれると驚いて隠れます。</p>
+    <p>伝承では、天平のころ、行基は十六人の童子に導かれて水間の滝にたどり着き、龍神から観音像を授かったという。光の粒は、その童子たち。妖怪は、のぞいたり、歩いたり、跳ねたり、ふっと現れたりします。指でふれると驚いて消えます。</p>
     <p class="en">Legend tells that the monk Gyōki was led to the Mizuma waterfall by sixteen spirit children. Point your camera at the forest. Tap a yokai when it peeks out.</p>
   </section>
 </div>
@@ -114,12 +114,17 @@ function background(){
 }
 
 /* ---------- sprites ---------- */
-const load=n=>{const i=new Image();i.src='sprites/'+n+'.png';return i};
-const FAIRY=['fairy-01','fairy-02','fairy-03'].map(load);
-const YOKAI=['hitotsume-01','hitotsume-02','karakasa-01','karakasa-02','kitsune-01','kitsune-02'].map(load);
-const ok=i=>i.complete&&i.naturalWidth>0;
+const IMG={};
+['f_hover','f_wave','f_glide','f_twirl','f_sit','f_kiss',
+ 'h_peek','h_walk','h_run','h_tongue','h_crouch',
+ 'c_hop','c_peek','c_side','c_open',
+ 'k_peek','k_sit','k_walk','k_leap','k_sleep','k_look'].forEach(n=>{const i=new Image();i.src='sprites3d/'+n+'.webp';IMG[n]=i});
+const ok=n=>{const i=IMG[n];return i&&i.complete&&i.naturalWidth>0};
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
 const off=document.createElement('canvas'),octx=off.getContext('2d');
-let shade=0; // how much to darken sprites to match the scene
+let shade=0;
 
 /* light level of the scene, sampled twice a second */
 const probe=document.createElement('canvas');probe.width=probe.height=16;const pctx=probe.getContext('2d',{willReadFrequently:true});
@@ -127,33 +132,62 @@ let probeAt=0;
 function measure(now){
   if(now<probeAt)return;probeAt=now+500;
   try{pctx.drawImage(cv,0,0,16,16);const d=pctx.getImageData(0,0,16,16).data;let s=0;for(let i=0;i<d.length;i+=4)s+=.3*d[i]+.59*d[i+1]+.11*d[i+2];
-    const lum=s/(d.length/4)/255;shade=Math.min(.45,Math.max(0,(.5-lum)*.9));}catch(_){shade=0}
+    const lum=s/(d.length/4)/255;shade=Math.min(.4,Math.max(0,(.5-lum)*.8));}catch(_){shade=0}
 }
-function sprite(im,x,y,w,h,dark){ // draw with scene-matched shading
-  if(dark<=.01){ctx.drawImage(im,x,y,w,h);return}
-  off.width=Math.ceil(w);off.height=Math.ceil(h);
-  octx.globalCompositeOperation='source-over';octx.clearRect(0,0,off.width,off.height);octx.drawImage(im,0,0,off.width,off.height);
-  octx.globalCompositeOperation='source-atop';octx.fillStyle=`rgba(8,16,18,${dark})`;octx.fillRect(0,0,off.width,off.height);
-  ctx.drawImage(off,x,y,w,h);
+/* draw one sprite: centre x,y, width w, optional flip, alpha, ghost glow */
+function put(name,x,y,w,o={}){
+  if(!ok(name))return null;const im=IMG[name],h=w*im.naturalHeight/im.naturalWidth;
+  const a=o.alpha??1,flip=o.flip?-1:1,rot=o.rot||0,sx=o.sx??1;
+  ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.scale(flip*sx,1);
+  let src=im;
+  if((o.dark??0)>.01){off.width=Math.ceil(w);off.height=Math.ceil(h);octx.globalCompositeOperation='source-over';octx.clearRect(0,0,off.width,off.height);octx.drawImage(im,0,0,off.width,off.height);octx.globalCompositeOperation='source-atop';octx.fillStyle=`rgba(8,16,18,${o.dark})`;octx.fillRect(0,0,off.width,off.height);src=off}
+  ctx.globalAlpha=a;ctx.drawImage(src,-w/2,-h/2,w,h);
+  if(o.glow){ctx.globalCompositeOperation='lighter';ctx.globalAlpha=a*o.glow;ctx.drawImage(im,-w/2,-h/2,w,h)}
+  ctx.restore();return h;
 }
 
-/* ---------- fairies (十六童子の光) ---------- */
-const fairies=FAIRY.map((im,i)=>({im,bx:rnd(.25,.75),by:rnd(.18,.55),ax:rnd(.2,.3),ay:rnd(.08,.16),sp:rnd(.18,.3),ph:rnd(0,6.28)+i*2,zs:rnd(.08,.14),px:0}));
+/* ---------- fairies: each one keeps choosing a new thing to do ---------- */
+const F_STILL=['f_hover','f_wave','f_kiss'];
+const fairies=[0,1,2].map(i=>({x:rnd(.2,.8)*W,y:rnd(.15,.55)*H,z:rnd(.7,1),pose:'f_hover',prev:null,fadeAt:0,act:null,until:0,ph:rnd(0,6.28),flip:false,id:i}));
 const dust=[];
-function drawFairy(f,t){
-  if(!ok(f.im))return;
-  const z=.75+.3*Math.sin(t*f.zs*2+f.ph);              // drifts nearer and farther
-  const x=(f.bx+Math.sin(t*f.sp+f.ph)*f.ax+Math.sin(t*f.sp*2.7+f.ph)*.04)*W;
-  const y=(f.by+Math.sin(t*f.sp*1.3+f.ph*1.7)*f.ay)*H+Math.sin(t*2.2+f.ph)*10;
-  const vx=x-f.px;f.px=x;
-  const w=W*.24*z,h=w*f.im.naturalHeight/f.im.naturalWidth;
-  ctx.save();ctx.globalCompositeOperation='lighter';
-  const g=ctx.createRadialGradient(x,y,0,x,y,w*.7);g.addColorStop(0,'rgba(220,255,250,.3)');g.addColorStop(1,'rgba(10,186,181,0)');
-  ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,w*.7,0,7);ctx.fill();ctx.restore();
-  if(!reduce&&Math.random()<.5)dust.push({x:x+rnd(-w*.15,w*.15),y:y+h*.2,vy:rnd(.4,1.2),vx:rnd(-.3,.3),life:1,r:rnd(1.5,3.5)*z});
-  ctx.save();ctx.translate(x,y);ctx.rotate(Math.max(-.25,Math.min(.25,vx*.02)));
-  const flap=reduce?1:.96+.04*Math.sin(t*26+f.ph);ctx.scale(flap,1);
-  ctx.drawImage(f.im,-w/2,-h/2,w,h);ctx.restore();
+function setPose(f,p,now){if(f.pose!==p){f.prev=f.pose;f.pose=p;f.fadeAt=now}}
+function chooseFairy(f,now){
+  const r=Math.random();const st={t0:now,x0:f.x,y0:f.y,z0:f.z};
+  if(r<.24){f.act='wander';f.until=now+rnd(2500,5000);st.cx=f.x;st.cy=f.y;st.ax=rnd(.08,.18)*W;st.ay=rnd(.04,.1)*H;st.sp=rnd(.6,1.2);setPose(f,pick(F_STILL),now)}
+  else if(r<.44){f.act='dart';const d=rnd(.6,1.3)*1000;f.until=now+d;st.d=d;st.x1=rnd(.12,.88)*W;st.y1=rnd(.1,.65)*H;st.z1=rnd(.6,1.1);f.flip=st.x1>f.x;setPose(f,'f_glide',now)}
+  else if(r<.56){f.act='circle';const d=rnd(2500,4000);f.until=now+d;st.d=d;st.cx=clamp(f.x,.25*W,.75*W);st.cy=clamp(f.y,.2*H,.6*H);st.r=rnd(.12,.22)*W;st.dir=Math.random()<.5?1:-1;setPose(f,'f_glide',now)}
+  else if(r<.66){f.act='twirl';f.until=now+rnd(1400,2200);setPose(f,'f_twirl',now)}
+  else if(r<.76){f.act='rest';f.until=now+rnd(2000,3500);setPose(f,'f_sit',now)}
+  else if(r<.88){f.act='approach';const d=rnd(2600,3600);f.until=now+d;st.d=d;st.x1=rnd(.35,.65)*W;st.y1=rnd(.3,.5)*H;setPose(f,pick(['f_wave','f_kiss']),now)}
+  else{f.act='flyby';const d=rnd(1600,2400);f.until=now+d;st.d=d;const left=Math.random()<.5;st.xs=left?-.2*W:1.2*W;st.xe=left?1.2*W:-.2*W;st.yb=rnd(.15,.6)*H;f.flip=left;setPose(f,'f_glide',now)}
+  f.st=st;
+}
+function updateFairy(f,now){
+  if(!f.act||now>f.until)chooseFairy(f,now);
+  const s=f.st,t=(now-s.t0)/1000,p=s.d?clamp((now-s.t0)/s.d,0,1):0;
+  switch(f.act){
+    case 'wander':f.x=s.cx+Math.sin(t*s.sp+f.ph)*s.ax;f.y=s.cy+Math.sin(t*s.sp*1.6+f.ph)*s.ay;f.z+=(s.z0-f.z)*.02;f.flip=Math.cos(t*s.sp+f.ph)>0;break;
+    case 'dart':{const e=ease(p);f.x=s.x0+(s.x1-s.x0)*e;f.y=s.y0+(s.y1-s.y0)*e-Math.sin(p*Math.PI)*H*.05;f.z=s.z0+(s.z1-s.z0)*e;if(p>=1)setPose(f,'f_hover',now);break}
+    case 'circle':{const a=t*Math.PI*2/2.6*s.dir;f.x=s.cx+Math.cos(a)*s.r;f.y=s.cy+Math.sin(a)*s.r*.45;f.z=s.z0*(1+.18*Math.sin(a));f.flip=(-Math.sin(a)*s.dir)>0;break}
+    case 'twirl':f.y=s.y0+Math.sin(t*3)*8;break;
+    case 'rest':f.y=s.y0+Math.sin(t*1.5)*6;break;
+    case 'approach':{const q=Math.sin(p*Math.PI);f.x=s.x0+(s.x1-s.x0)*q;f.y=s.y0+(s.y1-s.y0)*q;f.z=s.z0+(1.9-s.z0)*q;f.flip=false;break}
+    case 'flyby':f.x=s.xs+(s.xe-s.xs)*p;f.y=s.yb+Math.sin(p*Math.PI*3)*H*.04;f.z=s.z0;if(p>=1){f.x=s.xe<0?.1*W:.9*W}break;
+  }
+  f.y+=Math.sin(now/450+f.ph)*4;
+}
+function drawFairy(f,now){
+  updateFairy(f,now);
+  const w=W*.26*f.z,a=clamp(.55+.35*f.z,.6,.92);
+  // halo
+  ctx.save();ctx.globalCompositeOperation='lighter';const g=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,w*.6);g.addColorStop(0,'rgba(220,255,250,.28)');g.addColorStop(1,'rgba(10,186,181,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(f.x,f.y,w*.6,0,7);ctx.fill();ctx.restore();
+  if(!reduce&&Math.random()<.55)dust.push({x:f.x+rnd(-w*.12,w*.12),y:f.y+w*.15,vy:rnd(.3,1.1),vx:rnd(-.4,.4),life:1,r:rnd(1.5,3.5)*f.z});
+  const flap=reduce?1:.95+.05*Math.sin(now/18+f.ph);
+  let sx=flap,flip=f.flip;
+  if(f.act==='twirl'){const c=Math.cos((now-f.st.t0)/120);sx=Math.max(.08,Math.abs(c));flip=c<0}
+  const fade=clamp((now-f.fadeAt)/260,0,1);
+  if(f.prev&&fade<1)put(f.prev,f.x,f.y,w,{alpha:a*(1-fade),flip,sx,glow:.18});
+  put(f.pose,f.x,f.y,w,{alpha:a*(f.prev?fade:1),flip,sx,glow:.18});
 }
 function drawDust(){
   ctx.save();ctx.globalCompositeOperation='lighter';
@@ -162,25 +196,47 @@ function drawDust(){
   ctx.restore();
 }
 
-/* ---------- yokai peeking up from the bottom ---------- */
-let yokai=null,nextAt=performance.now()+2000,lastKind=-1;
-function spawn(now){
-  let k;do{k=Math.floor(Math.random()*YOKAI.length)}while(Math.floor(k/2)===Math.floor(lastKind/2)&&Math.random()<.8);lastKind=k;
-  const im=YOKAI[k];if(!ok(im)){nextAt=now+500;return}
-  const w=W*rnd(.42,.58);
-  yokai={im,w,h:w*im.naturalHeight/im.naturalWidth,x:rnd(.28,.72)*W,born:now,dur:rnd(3200,4600),hit:false};
+/* ---------- yokai: a director picks who appears and what they do ---------- */
+const CAST={
+  hitotsume:{peek:'h_peek',move:[['h_walk',.16,'walk'],['h_run',.32,'run']],stand:['h_tongue','h_crouch'],size:[.42,.55]},
+  karakasa:{peek:'c_peek',move:[['c_side',.2,'hop']],stand:['c_open','c_hop'],size:[.4,.55]},
+  kitsune:{peek:'k_peek',move:[['k_walk',.2,'walk'],['k_leap',.45,'leap']],stand:['k_sit','k_sleep','k_look'],size:[.45,.6]},
+};
+const ghosts=[];let nextGhost=performance.now()+1800,lastWho='';
+function spawnGhost(now){
+  let who;do{who=pick(Object.keys(CAST))}while(who===lastWho&&Math.random()<.75);lastWho=who;
+  const c=CAST[who],r=Math.random(),w=W*rnd(c.size[0],c.size[1]);
+  let g={who,born:now,hit:false,w,alpha:rnd(.68,.82)};
+  if(r<.3){g.act='peek';g.pose=c.peek;g.x=rnd(.25,.75)*W;g.dur=rnd(3000,4500)}
+  else if(r<.62){const m=pick(c.move);g.act=m[2];g.pose=m[0];const left=Math.random()<.5;g.dir=left?1:-1;g.flip=left;g.xs=left?-.35*W:1.35*W;g.xe=left?1.35*W:-.35*W;g.dur=1.7/m[1]*1000*rnd(.85,1.15);g.w*=rnd(.8,1)}
+  else if(r<.9){g.act='appear';g.pose=pick(c.stand);g.x=rnd(.22,.78)*W;g.yb=rnd(.62,.78)*H;g.dur=rnd(2600,3800);g.flip=Math.random()<.5;g.w*=rnd(.75,.95)}
+  else{g.act='popup';g.pose=c.peek;g.x=rnd(.4,.6)*W;g.w=W*rnd(.8,.95);g.dur=1500}
+  ghosts.push(g);
 }
-const ease=p=>1-Math.pow(1-p,3);
-function peek(y,now){
-  if(y.hit)return Math.max(0,1-(now-y.hitAt)/200);
-  const e=now-y.born;if(e<900)return ease(e/900);if(e<y.dur-800)return 1;return ease(Math.max(0,(y.dur-e)/800));
-}
-function drawYokai(y,now){
-  const p=peek(y,now);if(p<=0)return;
-  const breathe=reduce?1:1+.012*Math.sin(now/520);
-  const h=y.h*breathe,top=H-h*p,sway=reduce?0:Math.sin(now/900)*y.w*.015;
-  y.box=[y.x-y.w/2,top,y.w,h*p];
-  sprite(y.im,y.x-y.w/2+sway,top,y.w,h,shade);
+function drawGhost(g,now){
+  const e=now-g.born,p=clamp(e/g.dur,0,1);let x=g.x,y,a=g.alpha,rot=0;
+  const im=IMG[g.pose];if(!ok(g.pose)){g.dead=true;return}
+  const h=g.w*im.naturalHeight/im.naturalWidth;
+  const out=g.hit?clamp(1-(now-g.hitAt)/220,0,1):1;
+  if(g.act==='peek'||g.act==='popup'){
+    const rise=g.act==='popup'?260:900,fall=g.act==='popup'?300:800;
+    const q=e<rise?ease(e/rise):e<g.dur-fall?1:ease(clamp((g.dur-e)/fall,0,1));
+    y=H+h/2-h*q*out*(g.act==='popup'?.95:1);x+=Math.sin(now/900)*g.w*.015;
+  }else if(g.act==='appear'){
+    const q=Math.min(1,e/700,(g.dur-e)/700);a*=clamp(q,0,1)*out;y=g.yb+Math.sin(now/520)*6;
+  }else{
+    x=g.xs+(g.xe-g.xs)*p;const base=H*.86-h/2;
+    if(g.act==='walk')y=base-Math.abs(Math.sin(p*Math.PI*10))*h*.03;
+    else if(g.act==='run')y=base-Math.abs(Math.sin(p*Math.PI*16))*h*.05;
+    else if(g.act==='hop')y=base-Math.abs(Math.sin(p*Math.PI*6))*h*.35;
+    else{y=base-Math.sin(p*Math.PI)*H*.35;rot=(p-.5)*.5*g.dir}
+    a*=out;
+  }
+  if(e>g.dur||out<=0){g.dead=true;return}
+  // ghost light on the ground
+  ctx.save();ctx.globalCompositeOperation='lighter';const gl=ctx.createRadialGradient(x,y+h*.3,0,x,y+h*.3,g.w*.55);gl.addColorStop(0,`rgba(160,240,235,${.18*a})`);gl.addColorStop(1,'rgba(10,186,181,0)');ctx.fillStyle=gl;ctx.beginPath();ctx.arc(x,y+h*.3,g.w*.55,0,7);ctx.fill();ctx.restore();
+  put(g.pose,x,y,g.w,{alpha:a,flip:g.flip,rot,dark:shade,glow:.22});
+  g.box=[x-g.w/2,y-h/2,g.w,h];
 }
 
 /* subtle film grain so everything sits in one picture */
@@ -195,11 +251,10 @@ function mark(){
   ctx.textAlign='right';ctx.font=`500 ${W*.028}px "Shippori Mincho",serif`;ctx.fillText('水間鉄道 水間観音駅',W*.95,H*.955);
 }
 function draw(now){
-  const t=now/1000;
   background();measure(now);
-  if(!yokai&&now>nextAt)spawn(now);
-  if(yokai){drawYokai(yokai,now);const done=yokai.hit?now-yokai.hitAt>220:now-yokai.born>yokai.dur;if(done){yokai=null;nextAt=now+rnd(2000,4500)}}
-  drawDust();fairies.forEach(f=>drawFairy(f,t));
+  if(now>nextGhost&&ghosts.length<(Math.random()<.25?2:1)){spawnGhost(now);nextGhost=now+rnd(1200,3200)}
+  for(let k=ghosts.length-1;k>=0;k--){drawGhost(ghosts[k],now);if(ghosts[k].dead)ghosts.splice(k,1)}
+  drawDust();fairies.slice().sort((a,b)=>a.z-b.z).forEach(f=>drawFairy(f,now));
   drawGrain();mark();
 }
 function loop(now){draw(now);requestAnimationFrame(loop)}
@@ -207,9 +262,8 @@ requestAnimationFrame(loop);
 
 /* tap a yokai */
 stage.addEventListener('pointerdown',e=>{
-  if(!yokai||yokai.hit)return;
   const r=stage.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*W,y=(e.clientY-r.top)/r.height*H;
-  const bx=yokai.box;if(bx&&x>bx[0]&&x<bx[0]+bx[2]&&y>bx[1]-20){yokai.hit=true;yokai.hitAt=performance.now();found++;foundEl.textContent=found;statusEl.textContent='見つけた。妖怪は驚いて隠れました。'}
+  for(const g of ghosts){const b=g.box;if(!g.hit&&b&&x>b[0]&&x<b[0]+b[2]&&y>b[1]&&y<b[1]+b[3]){g.hit=true;g.hitAt=performance.now();found++;foundEl.textContent=found;statusEl.textContent='見つけた。妖怪は驚いて消えました。';break}}
 });
 
 /* camera */
